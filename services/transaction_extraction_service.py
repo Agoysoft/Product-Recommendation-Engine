@@ -1,5 +1,6 @@
-﻿"""Transaction basket extraction for FP-Growth preparation."""
+"""Transaction basket extraction for FP-Growth preparation."""
 
+from collections.abc import Iterator
 import logging
 from typing import Any
 
@@ -15,7 +16,7 @@ from recommendation_engine.repositories.transaction_repository import (
 
 
 class TransactionExtractionService:
-    """Reconstructs ERP sales into transaction baskets."""
+    """Reconstructs ERP products_logs sales into transaction baskets."""
 
     def __init__(
         self,
@@ -27,12 +28,12 @@ class TransactionExtractionService:
 
     def extract_baskets(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
         months: int = 3,
         customer_id: int | None = None,
         limit: int | None = None,
     ) -> list[TransactionBasket]:
-        """Return sale baskets reconstructed from ERP sale line rows."""
+        """Return sale baskets reconstructed from products_logs rows."""
         rows = self._transaction_repository.fetch_sale_item_rows(
             branch_id=branch_id,
             months=months,
@@ -45,7 +46,7 @@ class TransactionExtractionService:
 
     def extract_product_id_transactions(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
         months: int = 3,
         customer_id: int | None = None,
         limit: int | None = None,
@@ -61,7 +62,7 @@ class TransactionExtractionService:
 
     def extract_one_hot_dataframe(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
         months: int = 3,
         customer_id: int | None = None,
         limit: int | None = None,
@@ -86,6 +87,21 @@ class TransactionExtractionService:
         ]
         return pd.DataFrame(rows, columns=product_ids, dtype=bool)
 
+    def iter_product_id_transaction_batches(
+        self,
+        months: int = 3,
+        batch_size: int = 5000,
+        branch_id: int | None = None,
+    ) -> Iterator[list[list[int]]]:
+        """Yield product ID transaction baskets in bounded batches."""
+        for rows in self._transaction_repository.iter_sale_item_row_batches(
+            months=months,
+            batch_size=batch_size,
+            branch_id=branch_id,
+        ):
+            baskets = self._build_baskets(rows)
+            yield [basket.product_ids for basket in baskets if len(basket.product_ids) > 1]
+
     def _build_baskets(
         self,
         rows: list[dict[str, Any]],
@@ -100,7 +116,7 @@ class TransactionExtractionService:
                     "sale_id": sale_id,
                     "invoice": row.get("invoice"),
                     "customer_id": row.get("customer_id"),
-                    "branch_id": int(row["branch_id"]),
+                    "branch_id": int(row.get("branch_id") or 0),
                     "sale_date": row.get("sale_date"),
                     "items": [],
                 },

@@ -29,6 +29,9 @@ class Settings:
 
     database: DatabaseSettings
     log_level: str
+    recommendation_batch_size: int
+    fp_growth_min_support: float
+    fp_growth_min_confidence: float
     app_name: str = "Product Recommendation Engine"
     log_directory: Path = Path("logs")
     log_file_name: str = "recommendation_engine.log"
@@ -79,6 +82,18 @@ class SettingsLoader:
                 password=self._get_required("DB_PASSWORD"),
             ),
             log_level=log_level,
+            recommendation_batch_size=self._get_positive_int(
+                "RECOMMENDATION_BATCH_SIZE",
+                5000,
+            ),
+            fp_growth_min_support=self._get_probability(
+                "FP_GROWTH_MIN_SUPPORT",
+                0.001,
+            ),
+            fp_growth_min_confidence=self._get_probability(
+                "FP_GROWTH_MIN_CONFIDENCE",
+                0.05,
+            ),
         )
 
     def _validate_required_variables(self) -> None:
@@ -110,8 +125,29 @@ class SettingsLoader:
             raise SettingsError("DB_PORT must be between 1 and 65535.")
         return port
 
+    def _get_positive_int(self, variable: str, default: int) -> int:
+        raw_value = os.getenv(variable, str(default))
+        try:
+            value = int(raw_value)
+        except ValueError as exc:
+            raise SettingsError(f"{variable} must be a valid integer.") from exc
+        if value <= 0:
+            raise SettingsError(f"{variable} must be greater than zero.")
+        return value
+
+    def _get_probability(self, variable: str, default: float) -> float:
+        raw_value = os.getenv(variable, str(default))
+        try:
+            value = float(raw_value)
+        except ValueError as exc:
+            raise SettingsError(f"{variable} must be a valid number.") from exc
+        if value <= 0 or value > 1:
+            raise SettingsError(
+                f"{variable} must be greater than 0 and less than or equal to 1."
+            )
+        return value
+
 
 def get_settings(env_file: str | Path = ".env") -> Settings:
     """Return the validated application settings."""
     return SettingsLoader(env_file=env_file).load()
-
