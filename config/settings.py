@@ -32,6 +32,8 @@ class Settings:
     recommendation_batch_size: int
     fp_growth_min_support: float
     fp_growth_min_confidence: float
+    recommendation_months: int
+    recommendation_branch_id: int | None
     app_name: str = "Product Recommendation Engine"
     log_directory: Path = Path("logs")
     log_file_name: str = "recommendation_engine.log"
@@ -94,6 +96,13 @@ class SettingsLoader:
                 "FP_GROWTH_MIN_CONFIDENCE",
                 0.05,
             ),
+            recommendation_months=self._get_non_negative_int(
+                "RECOMMENDATION_MONTHS",
+                3,
+            ),
+            recommendation_branch_id=self._get_optional_positive_int(
+                "RECOMMENDATION_BRANCH_ID",
+            ),
         )
 
     def _validate_required_variables(self) -> None:
@@ -127,6 +136,28 @@ class SettingsLoader:
 
     def _get_positive_int(self, variable: str, default: int) -> int:
         raw_value = os.getenv(variable, str(default))
+        try:
+            value = int(raw_value)
+        except ValueError as exc:
+            raise SettingsError(f"{variable} must be a valid integer.") from exc
+        if value <= 0:
+            raise SettingsError(f"{variable} must be greater than zero.")
+        return value
+
+    def _get_non_negative_int(self, variable: str, default: int) -> int:
+        raw_value = os.getenv(variable, str(default))
+        try:
+            value = int(raw_value)
+        except ValueError as exc:
+            raise SettingsError(f"{variable} must be a valid integer.") from exc
+        if value < 0:
+            raise SettingsError(f"{variable} must be zero or greater.")
+        return value
+
+    def _get_optional_positive_int(self, variable: str) -> int | None:
+        raw_value = os.getenv(variable)
+        if raw_value is None or not raw_value.strip():
+            return None
         try:
             value = int(raw_value)
         except ValueError as exc:

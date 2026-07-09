@@ -46,42 +46,26 @@ class RecommendationRepository(BaseRepository):
         query = f"""
             INSERT INTO `{self._table_name}` (
                 product,
-                pair,
-                support,
+                pair_product,
+                pair_count,
                 confidence,
                 lift,
-                cooccurrence_count,
-                antecedent_count,
-                consequent_count,
-                transaction_count
+                updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON DUPLICATE KEY UPDATE
-                support = (cooccurrence_count + VALUES(cooccurrence_count)) /
-                    NULLIF(transaction_count + VALUES(transaction_count), 0),
-                confidence = (cooccurrence_count + VALUES(cooccurrence_count)) /
-                    NULLIF(antecedent_count + VALUES(antecedent_count), 0),
-                lift = ((cooccurrence_count + VALUES(cooccurrence_count)) /
-                    NULLIF(antecedent_count + VALUES(antecedent_count), 0)) /
-                    NULLIF((consequent_count + VALUES(consequent_count)) /
-                    NULLIF(transaction_count + VALUES(transaction_count), 0), 0),
-                cooccurrence_count = cooccurrence_count + VALUES(cooccurrence_count),
-                antecedent_count = antecedent_count + VALUES(antecedent_count),
-                consequent_count = consequent_count + VALUES(consequent_count),
-                transaction_count = transaction_count + VALUES(transaction_count),
+                pair_count = pair_count + VALUES(pair_count),
+                confidence = VALUES(confidence),
+                lift = VALUES(lift),
                 updated_at = CURRENT_TIMESTAMP
         """
         params = [
             (
                 rule.product,
                 rule.pair,
-                Decimal(str(rule.support)),
+                rule.cooccurrence_count,
                 Decimal(str(rule.confidence)),
                 Decimal(str(rule.lift)),
-                rule.cooccurrence_count,
-                rule.antecedent_count,
-                rule.consequent_count,
-                rule.transaction_count,
             )
             for rule in rules
         ]
@@ -102,10 +86,15 @@ class RecommendationRepository(BaseRepository):
             params["limit"] = limit
 
         query = f"""
-            SELECT product, pair, support, confidence, lift, cooccurrence_count
+            SELECT
+                product,
+                pair_product AS pair,
+                pair_count,
+                confidence,
+                lift
             FROM `{self._table_name}`
             WHERE product = %(product_id)s
-            ORDER BY lift DESC, confidence DESC, support DESC
+            ORDER BY lift DESC, confidence DESC, pair_count DESC
             {limit_clause}
         """
         return self.execute_query(query, params)

@@ -28,19 +28,21 @@ class TransactionRepository:
         """Fetch sale ledger rows needed to reconstruct transaction baskets."""
         if branch_id is not None and branch_id <= 0:
             raise ValueError("branch_id must be greater than zero.")
-        if months <= 0:
-            raise ValueError("months must be greater than zero.")
+        if months < 0:
+            raise ValueError("months must be zero or greater.")
         if limit is not None and limit <= 0:
             raise ValueError("limit must be greater than zero.")
 
         filters = [
             "pl.type = 0",
-            "pl.added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)",
             "pl.referrer IS NOT NULL",
             "pl.product IS NOT NULL",
             "pl.product > 0",
         ]
-        params: dict[str, Any] = {"months": months}
+        params: dict[str, Any] = {}
+        if months > 0:
+            filters.append("pl.added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)")
+            params["months"] = months
 
         if branch_id is not None:
             filters.append("pl.branch = %(branch_id)s")
@@ -88,8 +90,8 @@ class TransactionRepository:
         branch_id: int | None = None,
     ) -> Iterator[list[dict[str, Any]]]:
         """Yield products_logs sale rows in referrer-based batches."""
-        if months <= 0:
-            raise ValueError("months must be greater than zero.")
+        if months < 0:
+            raise ValueError("months must be zero or greater.")
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero.")
         if branch_id is not None and branch_id <= 0:
@@ -121,17 +123,18 @@ class TransactionRepository:
     ) -> list[dict[str, Any]]:
         filters = [
             "type = 0",
-            "added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)",
             "referrer IS NOT NULL",
             "referrer > %(last_referrer)s",
             "product IS NOT NULL",
             "product > 0",
         ]
         params: dict[str, Any] = {
-            "months": months,
             "last_referrer": last_referrer,
             "batch_size": batch_size,
         }
+        if months > 0:
+            filters.append("added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)")
+            params["months"] = months
         if branch_id is not None:
             filters.append("branch = %(branch_id)s")
             params["branch_id"] = branch_id
