@@ -8,7 +8,7 @@ from recommendation_engine.database.connection import DatabaseManager
 
 
 class TransactionRepository:
-    """Reads sales transactions from the products_logs inventory ledger."""
+    """Reads non-instore, app-enabled sales from the ERP ledger tables."""
 
     def __init__(
         self,
@@ -35,9 +35,6 @@ class TransactionRepository:
 
         filters = [
             "pl.type = 0",
-            "pl.referrer IS NOT NULL",
-            "pl.product IS NOT NULL",
-            "pl.product > 0",
         ]
         params: dict[str, Any] = {}
         if months > 0:
@@ -50,7 +47,7 @@ class TransactionRepository:
 
         if customer_id is not None:
             self._logger.warning(
-                "customer_id filter ignored because products_logs is the only transaction source."
+                "customer_id filter ignored because transaction extraction is driven by sales_order and products_logs."
             )
 
         limit_clause = ""
@@ -68,16 +65,25 @@ class TransactionRepository:
                 pl.product AS product_id,
                 pl.qty,
                 pl.selling_price,
-                NULL AS product_name,
+                p.title AS product_name,
                 pl.uic AS ui_code
             FROM products_logs pl
+            JOIN (
+                SELECT DISTINCT sales
+                FROM sales_order
+                WHERE sales IS NOT NULL
+            ) so
+                ON so.sales = pl.referrer
+            JOIN products p
+                ON p.id = pl.product
+               AND p.on_app = 1
             WHERE {" AND ".join(filters)}
             ORDER BY pl.referrer ASC, pl.id ASC
             {limit_clause}
         """
 
         self._logger.info(
-            "Fetching products_logs sale rows for branch_id=%s months=%s.",
+            "Fetching app-enabled non-instore sale rows for branch_id=%s months=%s.",
             branch_id,
             months,
         )
@@ -122,29 +128,35 @@ class TransactionRepository:
         branch_id: int | None,
     ) -> list[dict[str, Any]]:
         filters = [
-            "type = 0",
-            "referrer IS NOT NULL",
-            "referrer > %(last_referrer)s",
-            "product IS NOT NULL",
-            "product > 0",
+            "pl.type = 0",
+            "pl.referrer > %(last_referrer)s",
         ]
         params: dict[str, Any] = {
             "last_referrer": last_referrer,
             "batch_size": batch_size,
         }
         if months > 0:
-            filters.append("added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)")
+            filters.append("pl.added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)")
             params["months"] = months
         if branch_id is not None:
-            filters.append("branch = %(branch_id)s")
+            filters.append("pl.branch = %(branch_id)s")
             params["branch_id"] = branch_id
 
         query = f"""
-            SELECT referrer
-            FROM products_logs
+            SELECT pl.referrer
+            FROM products_logs pl
+            JOIN (
+                SELECT DISTINCT sales
+                FROM sales_order
+                WHERE sales IS NOT NULL
+            ) so
+                ON so.sales = pl.referrer
+            JOIN products p
+                ON p.id = pl.product
+               AND p.on_app = 1
             WHERE {" AND ".join(filters)}
-            GROUP BY referrer
-            ORDER BY referrer ASC
+            GROUP BY pl.referrer
+            ORDER BY pl.referrer ASC
             LIMIT %(batch_size)s
         """
         return self._database_manager.fetch_all(query, params)
@@ -161,8 +173,6 @@ class TransactionRepository:
         filters = [
             "pl.type = 0",
             f"pl.referrer IN ({placeholders})",
-            "pl.product IS NOT NULL",
-            "pl.product > 0",
         ]
         params: list[Any] = list(referrers)
         if branch_id is not None:
@@ -179,9 +189,18 @@ class TransactionRepository:
                 pl.product AS product_id,
                 pl.qty,
                 pl.selling_price,
-                NULL AS product_name,
+                p.title AS product_name,
                 pl.uic AS ui_code
             FROM products_logs pl
+            JOIN (
+                SELECT DISTINCT sales
+                FROM sales_order
+                WHERE sales IS NOT NULL
+            ) so
+                ON so.sales = pl.referrer
+            JOIN products p
+                ON p.id = pl.product
+               AND p.on_app = 1
             WHERE {" AND ".join(filters)}
             ORDER BY pl.referrer ASC, pl.id ASC
         """

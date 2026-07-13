@@ -101,9 +101,10 @@ The database user should have read access to the existing ERP tables:
 
 - `products`
 - `products_logs`
+- `sales_order`
 - `sales`
 
-Write access can be added later for the future `product_recommendations` table.
+Write access is required for the `product_pair` recommendation table.
 
 ## Running
 
@@ -136,12 +137,15 @@ Implemented in this stage:
 - Entry point
 - Documentation
 
-Not implemented in this stage:
+Implemented in this stage:
 
 - FP-Growth
 - Transaction builder
 - Recommendation repository
 - Association rules
+
+Still not implemented:
+
 - Scheduler jobs
 - API endpoints
 
@@ -149,17 +153,18 @@ Not implemented in this stage:
 
 This stage adds schema-aware basket reconstruction from the ERP tables:
 
-- `sales`
+- `sales_order`
 - `products_logs`
 - `products`
 
-The extraction layer joins sale headers to sale line records using `products_logs.referrer = sales.id`, filters sale lines with `products_logs.type = 0`, and joins product metadata using `products.id = products_logs.product`.
+The extraction layer joins `sales_order.sales` to `products_logs.referrer` to exclude instore sales, filters sale lines with `products_logs.type = 0`, and joins product metadata using `products.id = products_logs.product` with `products.on_app = 1`.
 
 Implemented components:
 
 - `models/transaction.py` defines `TransactionItem` and `TransactionBasket` data models.
 - `repositories/transaction_repository.py` reads sale item rows from MySQL.
-- `services/transaction_extraction_service.py` groups sale rows into baskets and prepares product ID transactions or a one-hot `pandas.DataFrame` for future FP-Growth processing.
+- `services/transaction_extraction_service.py` groups sale rows into baskets and prepares product ID transactions or a one-hot `pandas.DataFrame` for FP-Growth processing.
+- `services/fp_growth_service.py` mines frequent itemsets and stores one-to-one recommendation rules.
 
 Example usage inside application code:
 
@@ -172,20 +177,26 @@ transactions = service.extract_product_id_transactions(branch_id=1, months=3)
 one_hot = service.extract_one_hot_dataframe(branch_id=1, months=3)
 ```
 
-The extraction layer does not mine frequent itemsets, generate association rules, or write recommendations. Those steps are intentionally left for later implementation.
+The extraction layer prepares baskets; `services/fp_growth_service.py` mines frequent itemsets, generates association rules, and writes recommendations.
 
 ## Production FP-Growth Recommendation Engine
 
-The production recommendation path uses only the ApexCloud ERP inventory ledger table `products_logs`.
+The production recommendation path uses `products_logs` as the line-item source, `sales_order` to restrict baskets to non-instore sales, and `products` to keep only app-enabled items.
 
 Transaction extraction rules:
 
-- Read only `products_logs`.
-- Use only `type = 0` sales rows.
-- Do not read `sales` or invoice detail tables.
+- Read `products_logs` line items.
+- Keep only `type = 0` sold rows.
+- Join `sales_order` on `sales_order.sales = products_logs.referrer` to exclude instore sales.
+- Join `products` and keep only `products.on_app = 1`.
 - Group rows by `referrer`; each unique referrer is one customer purchase basket.
 - Duplicate product IDs inside the same referrer are reduced to one item.
-- Invalid product IDs are ignored.
+
+Create the basket query with:
+
+```sql
+source sql/fp_growth_baskets.sql
+```
 
 Create the recommendation output table with:
 

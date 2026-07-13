@@ -57,6 +57,14 @@ class FPGrowthService:
         total_transactions = 0
         total_pairs = 0
         batch_number = 0
+        self._logger.info(
+            "Starting FP-Growth months=%s batch_size=%s min_support=%s min_confidence=%s branch_id=%s.",
+            months,
+            self._batch_size,
+            self._min_support,
+            self._min_confidence,
+            branch_id,
+        )
 
         for batch_number, transactions in enumerate(
             self._transaction_extraction_service.iter_product_id_transaction_batches(
@@ -67,6 +75,11 @@ class FPGrowthService:
             start=1,
         ):
             batch_started = time.perf_counter()
+            self._logger.info(
+                "Processing batch=%s baskets=%s.",
+                batch_number,
+                len(transactions),
+            )
             rules = self.generate_rules(transactions)
             self._recommendation_repository.upsert_product_pairs(rules)
 

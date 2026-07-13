@@ -16,7 +16,7 @@ from recommendation_engine.repositories.transaction_repository import (
 
 
 class TransactionExtractionService:
-    """Reconstructs ERP products_logs sales into transaction baskets."""
+    """Reconstructs non-instore, app-enabled ERP sales into transaction baskets."""
 
     def __init__(
         self,
