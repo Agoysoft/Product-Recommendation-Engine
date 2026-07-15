@@ -22,11 +22,8 @@ if __package__ is None or __package__ == "":
 from recommendation_engine.config.database import DatabaseConfigFactory
 from recommendation_engine.config.settings import SettingsError, get_settings
 from recommendation_engine.database.connection import DatabaseError, DatabaseManager
-from recommendation_engine.repositories.recommendation_repository import RecommendationRepository
-from recommendation_engine.repositories.transaction_repository import TransactionRepository
-from recommendation_engine.services.fp_growth_service import FPGrowthService
-from recommendation_engine.services.transaction_extraction_service import (
-    TransactionExtractionService,
+from recommendation_engine.scheduler.recommendation_scheduler import (
+    RecommendationScheduler,
 )
 from recommendation_engine.utils.logger import configure_logger
 
@@ -55,31 +52,13 @@ def main() -> None:
         if not database_manager.health_check():
             raise DatabaseError("Database health check failed.")
 
-        transaction_repository = TransactionRepository(
+        scheduler = RecommendationScheduler(
             database_manager=database_manager,
+            settings=settings,
             logger=logger,
         )
-        transaction_service = TransactionExtractionService(
-            transaction_repository=transaction_repository,
-            logger=logger,
-        )
-        recommendation_repository = RecommendationRepository(
-            database_manager=database_manager,
-            logger=logger,
-        )
-        fp_growth_service = FPGrowthService(
-            transaction_extraction_service=transaction_service,
-            recommendation_repository=recommendation_repository,
-            min_support=settings.fp_growth_min_support,
-            min_confidence=settings.fp_growth_min_confidence,
-            batch_size=settings.recommendation_batch_size,
-            logger=logger,
-        )
+        summary = scheduler.run()
 
-        summary = fp_growth_service.run(
-            months=settings.recommendation_months,
-            branch_id=settings.recommendation_branch_id,
-        )
         print(f"Recommendation generation completed: {summary}")
         logger.info("Recommendation generation completed: %s", summary)
     except (SettingsError, DatabaseError) as exc:

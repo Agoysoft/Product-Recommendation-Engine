@@ -2,9 +2,9 @@
 
 A separate Python module for generating supermarket product recommendations from the existing ERP MySQL database.
 
-The existing ERP remains unchanged. This service reads from the shared ERP database tables and will later write generated recommendations to a dedicated `product_recommendations` table.
+The existing ERP remains unchanged. This service reads from the shared ERP database tables and writes generated recommendations to the `product_pair` table.
 
-No recommendation algorithm, transaction builder, scheduler, API, or association rule logic is implemented in this stage.
+The module now includes basket extraction, pair-count recommendation mining, and a scheduler for incremental daily updates plus weekly full rebuilds. API endpoints are still not implemented.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ The module is organized around infrastructure concerns only:
 - Generic database manager for query execution and transaction control.
 - Generic base repository for future table-specific repositories.
 - Centralized console and rotating file logging.
-- Simple entry point that validates configuration, connects to MySQL, runs a health check, and exits safely.
+- Simple entry point that validates configuration, connects to MySQL, runs recommendation generation, and exits safely.
 
 ## Folder Structure
 
@@ -35,6 +35,7 @@ recommendation_engine/
     __init__.py
   scheduler/
     __init__.py
+    recommendation_scheduler.py
   models/
     __init__.py
   sql/
@@ -117,10 +118,12 @@ python main.py
 Expected output:
 
 ```text
-Recommendation Engine initialized successfully.
+Recommendation generation completed: {...}
 ```
 
-The command loads configuration, initializes logging, connects to MySQL through a connection pool, runs `SELECT 1 AS healthy`, and disconnects safely.
+The command loads configuration, initializes logging, connects to MySQL through a connection pool, runs the recommendation scheduler, and disconnects safely.
+
+For automation, run `main.py` using Windows Task Scheduler or cron.
 
 ## Current Scope
 
@@ -136,17 +139,14 @@ Implemented in this stage:
 - Logger
 - Entry point
 - Documentation
-
-Implemented in this stage:
-
-- FP-Growth
 - Transaction builder
+- Pair-count recommendation mining
 - Recommendation repository
-- Association rules
+- Support/confidence/lift calculations
+- Scheduler jobs
 
 Still not implemented:
 
-- Scheduler jobs
 - API endpoints
 
 ## Transaction Extraction Layer
@@ -163,8 +163,8 @@ Implemented components:
 
 - `models/transaction.py` defines `TransactionItem` and `TransactionBasket` data models.
 - `repositories/transaction_repository.py` reads sale item rows from MySQL.
-- `services/transaction_extraction_service.py` groups sale rows into baskets and prepares product ID transactions or a one-hot `pandas.DataFrame` for FP-Growth processing.
-- `services/fp_growth_service.py` mines frequent itemsets and stores one-to-one recommendation rules.
+- `services/transaction_extraction_service.py` groups sale rows into baskets and prepares product ID transactions for recommendation processing.
+- `services/pair_count_service.py` counts product pairs, calculates support/confidence/lift, and stores one-to-one recommendation rules.
 
 Example usage inside application code:
 
@@ -174,12 +174,11 @@ service = TransactionExtractionService(repository)
 
 baskets = service.extract_baskets(branch_id=1, months=3)
 transactions = service.extract_product_id_transactions(branch_id=1, months=3)
-one_hot = service.extract_one_hot_dataframe(branch_id=1, months=3)
 ```
 
-The extraction layer prepares baskets; `services/fp_growth_service.py` mines frequent itemsets, generates association rules, and writes recommendations.
+The extraction layer prepares baskets; `services/pair_count_service.py` counts product pairs, calculates support/confidence/lift, and writes recommendations.
 
-## Production FP-Growth Recommendation Engine
+## Production Pair-Count Recommendation Engine
 
 The production recommendation path uses `products_logs` as the line-item source, `sales_order` to restrict baskets to non-instore sales, and `products` to keep only app-enabled items.
 
@@ -195,7 +194,7 @@ Transaction extraction rules:
 Create the basket query with:
 
 ```sql
-source sql/fp_growth_baskets.sql
+source sql/pair_count_baskets.sql
 ```
 
 Create the recommendation output table with:
@@ -204,15 +203,21 @@ Create the recommendation output table with:
 source sql/create_product_pair.sql
 ```
 
-The `product_pair` table stores one-to-one association rules with `support`, `confidence`, and `lift`. Updates use `INSERT ... ON DUPLICATE KEY UPDATE`; the engine does not truncate previous results on every run.
+The `product_pair` table stores one-to-one recommendation rules with `support`, `confidence`, and `lift`. These metrics are calculated from co-occurrence counts in code and then written with `INSERT ... ON DUPLICATE KEY UPDATE`; the engine does not truncate previous results on every run.
+
+A scheduler runs daily incremental updates for new sales and performs a weekly full rebuild to correct drift and refresh stale recommendations. The scheduler stores its state in `state/recommendation_scheduler.json`.
 
 Configuration:
 
 ```env
 RECOMMENDATION_BATCH_SIZE=5000
-FP_GROWTH_MIN_SUPPORT=0.001
-FP_GROWTH_MIN_CONFIDENCE=0.05
+PAIR_COUNT_MIN_SUPPORT=0.001
+PAIR_COUNT_MIN_CONFIDENCE=0.05
 ```
+
+Legacy `FP_GROWTH_MIN_SUPPORT` and `FP_GROWTH_MIN_CONFIDENCE` values are still accepted for compatibility.
+
+For product suggestions, results are ordered by `lift DESC`, then `confidence DESC`, then `support DESC`.
 
 Example wiring:
 
@@ -220,15 +225,48 @@ Example wiring:
 transaction_repository = TransactionRepository(database_manager)
 transaction_service = TransactionExtractionService(transaction_repository)
 recommendation_repository = RecommendationRepository(database_manager)
-fp_growth_service = FPGrowthService(
+recommendation_service = PairCountRecommendationService(
     transaction_extraction_service=transaction_service,
     recommendation_repository=recommendation_repository,
-    min_support=settings.fp_growth_min_support,
-    min_confidence=settings.fp_growth_min_confidence,
+    min_support=settings.pair_count_min_support,
+    min_confidence=settings.pair_count_min_confidence,
     batch_size=settings.recommendation_batch_size,
 )
 
-summary = fp_growth_service.run(months=3)
+summary = recommendation_service.run(months=3)
 ```
 
-Lookup recommendations for a product through `RecommendationRepository.find_pairs_for_product(product_id)`.
+Lookup recommendations for a product through `RecommendationRepository.find_pairs_for_product(product_id, limit=3)`.
+
+## Scheduling daily and weekly jobs
+
+This project does not keep a background process running all the time. Use the operating system scheduler to start `python main.py` automatically.
+
+### Windows Task Scheduler
+
+Create two tasks:
+
+- **Daily task**: run every day to process incremental updates.
+- **Weekly task**: run once per week to perform a full rebuild.
+
+Use the same command for both tasks:
+
+```bash
+python main.py
+```
+
+### cron (Linux/macOS)
+
+Example daily run at 2:00 AM:
+
+```cron
+0 2 * * * /path/to/python /path/to/recommendation_engine/main.py
+```
+
+Example weekly full rebuild run on Sunday at 2:00 AM:
+
+```cron
+0 2 * * 0 /path/to/python /path/to/recommendation_engine/main.py
+```
+
+The scheduler decides whether to do an incremental update or a weekly rebuild based on `state/recommendation_scheduler.json`.

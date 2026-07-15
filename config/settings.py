@@ -30,8 +30,8 @@ class Settings:
     database: DatabaseSettings
     log_level: str
     recommendation_batch_size: int
-    fp_growth_min_support: float
-    fp_growth_min_confidence: float
+    pair_count_min_support: float
+    pair_count_min_confidence: float
     recommendation_months: int
     recommendation_branch_id: int | None
     app_name: str = "Product Recommendation Engine"
@@ -88,13 +88,13 @@ class SettingsLoader:
                 "RECOMMENDATION_BATCH_SIZE",
                 5000,
             ),
-            fp_growth_min_support=self._get_probability(
-                "FP_GROWTH_MIN_SUPPORT",
-                0.001,
+            pair_count_min_support=self._get_probability(
+                "PAIR_COUNT_MIN_SUPPORT",
+                float(os.getenv("FP_GROWTH_MIN_SUPPORT", "0.001")),
             ),
-            fp_growth_min_confidence=self._get_probability(
-                "FP_GROWTH_MIN_CONFIDENCE",
-                0.05,
+            pair_count_min_confidence=self._get_probability(
+                "PAIR_COUNT_MIN_CONFIDENCE",
+                float(os.getenv("FP_GROWTH_MIN_CONFIDENCE", "0.05")),
             ),
             recommendation_months=self._get_non_negative_int(
                 "RECOMMENDATION_MONTHS",

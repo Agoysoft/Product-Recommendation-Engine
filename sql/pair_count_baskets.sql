@@ -1,4 +1,4 @@
--- Basket extraction query for FP-Growth
+-- Basket extraction query for pair-count recommendations
 -- Builds one basket per sale from non-instore sales in sales_order
 -- and keeps only products marked as on_app = 1.
 

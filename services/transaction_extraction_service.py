@@ -1,6 +1,7 @@
-"""Transaction basket extraction for FP-Growth preparation."""
+"""Transaction basket extraction for recommendation preparation."""
 
 from collections.abc import Iterator
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -30,6 +31,7 @@ class TransactionExtractionService:
         self,
         branch_id: int | None = None,
         months: int = 3,
+        since: datetime | None = None,
         customer_id: int | None = None,
         limit: int | None = None,
     ) -> list[TransactionBasket]:
@@ -37,6 +39,7 @@ class TransactionExtractionService:
         rows = self._transaction_repository.fetch_sale_item_rows(
             branch_id=branch_id,
             months=months,
+            since=since,
             customer_id=customer_id,
             limit=limit,
         )
@@ -48,13 +51,15 @@ class TransactionExtractionService:
         self,
         branch_id: int | None = None,
         months: int = 3,
+        since: datetime | None = None,
         customer_id: int | None = None,
         limit: int | None = None,
     ) -> list[list[int]]:
-        """Return baskets as product ID lists for later FP-Growth processing."""
+        """Return baskets as product ID lists for later recommendation processing."""
         baskets = self.extract_baskets(
             branch_id=branch_id,
             months=months,
+            since=since,
             customer_id=customer_id,
             limit=limit,
         )
@@ -64,13 +69,15 @@ class TransactionExtractionService:
         self,
         branch_id: int | None = None,
         months: int = 3,
+        since: datetime | None = None,
         customer_id: int | None = None,
         limit: int | None = None,
     ) -> pd.DataFrame:
-        """Return a one-hot encoded product matrix for later FP-Growth use."""
+        """Return a one-hot encoded product matrix for diagnostics or legacy use."""
         transactions = self.extract_product_id_transactions(
             branch_id=branch_id,
             months=months,
+            since=since,
             customer_id=customer_id,
             limit=limit,
         )
@@ -90,12 +97,14 @@ class TransactionExtractionService:
     def iter_product_id_transaction_batches(
         self,
         months: int = 3,
+        since: datetime | None = None,
         batch_size: int = 5000,
         branch_id: int | None = None,
     ) -> Iterator[list[list[int]]]:
         """Yield product ID transaction baskets in bounded batches."""
         for rows in self._transaction_repository.iter_sale_item_row_batches(
             months=months,
+            since=since,
             batch_size=batch_size,
             branch_id=branch_id,
         ):

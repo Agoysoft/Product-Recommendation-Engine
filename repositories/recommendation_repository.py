@@ -46,26 +46,42 @@ class RecommendationRepository(BaseRepository):
         query = f"""
             INSERT INTO `{self._table_name}` (
                 product,
-                pair_product,
-                pair_count,
+                pair,
+                support,
                 confidence,
                 lift,
-                updated_at
+                cooccurrence_count,
+                antecedent_count,
+                consequent_count,
+                transaction_count
             )
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-                pair_count = pair_count + VALUES(pair_count),
-                confidence = VALUES(confidence),
-                lift = VALUES(lift),
+                support = (cooccurrence_count + VALUES(cooccurrence_count)) /
+                    NULLIF(transaction_count + VALUES(transaction_count), 0),
+                confidence = (cooccurrence_count + VALUES(cooccurrence_count)) /
+                    NULLIF(antecedent_count + VALUES(antecedent_count), 0),
+                lift = ((cooccurrence_count + VALUES(cooccurrence_count)) /
+                    NULLIF(antecedent_count + VALUES(antecedent_count), 0)) /
+                    NULLIF((consequent_count + VALUES(consequent_count)) /
+                    NULLIF(transaction_count + VALUES(transaction_count), 0), 0),
+                cooccurrence_count = cooccurrence_count + VALUES(cooccurrence_count),
+                antecedent_count = antecedent_count + VALUES(antecedent_count),
+                consequent_count = consequent_count + VALUES(consequent_count),
+                transaction_count = transaction_count + VALUES(transaction_count),
                 updated_at = CURRENT_TIMESTAMP
         """
         params = [
             (
                 rule.product,
                 rule.pair,
-                rule.cooccurrence_count,
+                Decimal(str(rule.support)),
                 Decimal(str(rule.confidence)),
                 Decimal(str(rule.lift)),
+                rule.cooccurrence_count,
+                rule.antecedent_count,
+                rule.consequent_count,
+                rule.transaction_count,
             )
             for rule in rules
         ]
@@ -73,8 +89,17 @@ class RecommendationRepository(BaseRepository):
         self._database_manager.commit()
         return affected_rows
 
-    def find_pairs_for_product(self, product_id: int, limit: int | None = None) -> list[dict]:
-        """Return recommended pair products for a product ordered by strength."""
+    def clear_product_pairs(self) -> int:
+        """Remove all stored recommendation rows."""
+        self._database_manager.execute(f"TRUNCATE TABLE `{self._table_name}`")
+        self._database_manager.commit()
+        return 0
+
+    def find_pairs_for_product(self, product_id: int, limit: int | None = 3) -> list[dict]:
+        """Return recommended pair products for a product ordered by strength.
+
+        Defaults to the top 3 recommendations.
+        """
         if product_id <= 0:
             raise ValueError("product_id must be greater than zero.")
         params: dict[str, int] = {"product_id": product_id}
@@ -88,13 +113,14 @@ class RecommendationRepository(BaseRepository):
         query = f"""
             SELECT
                 product,
-                pair_product AS pair,
-                pair_count,
+                pair,
+                support,
                 confidence,
-                lift
+                lift,
+                cooccurrence_count
             FROM `{self._table_name}`
             WHERE product = %(product_id)s
-            ORDER BY lift DESC, confidence DESC, pair_count DESC
+            ORDER BY lift DESC, confidence DESC, support DESC
             {limit_clause}
         """
         return self.execute_query(query, params)

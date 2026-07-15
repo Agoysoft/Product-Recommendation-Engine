@@ -1,6 +1,7 @@
 """Repositories for extracting ERP sale transaction rows."""
 
 from collections.abc import Iterator
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -22,6 +23,7 @@ class TransactionRepository:
         self,
         branch_id: int | None = None,
         months: int = 3,
+        since: datetime | None = None,
         customer_id: int | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -33,11 +35,13 @@ class TransactionRepository:
         if limit is not None and limit <= 0:
             raise ValueError("limit must be greater than zero.")
 
-        filters = [
-            "pl.type = 0",
-        ]
+        filters = ["pl.type = 0"]
         params: dict[str, Any] = {}
-        if months > 0:
+
+        if since is not None:
+            filters.append("pl.added >= %(since)s")
+            params["since"] = since
+        elif months > 0:
             filters.append("pl.added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)")
             params["months"] = months
 
@@ -83,15 +87,17 @@ class TransactionRepository:
         """
 
         self._logger.info(
-            "Fetching app-enabled non-instore sale rows for branch_id=%s months=%s.",
+            "Fetching app-enabled non-instore sale rows for branch_id=%s months=%s since=%s.",
             branch_id,
             months,
+            since,
         )
         return self._database_manager.fetch_all(query, params)
 
     def iter_sale_item_row_batches(
         self,
         months: int = 3,
+        since: datetime | None = None,
         batch_size: int = 5000,
         branch_id: int | None = None,
     ) -> Iterator[list[dict[str, Any]]]:
@@ -107,6 +113,7 @@ class TransactionRepository:
         while True:
             referrers = self._fetch_referrer_batch(
                 months=months,
+                since=since,
                 batch_size=batch_size,
                 last_referrer=last_referrer,
                 branch_id=branch_id,
@@ -123,6 +130,7 @@ class TransactionRepository:
     def _fetch_referrer_batch(
         self,
         months: int,
+        since: datetime | None,
         batch_size: int,
         last_referrer: int,
         branch_id: int | None,
@@ -135,7 +143,10 @@ class TransactionRepository:
             "last_referrer": last_referrer,
             "batch_size": batch_size,
         }
-        if months > 0:
+        if since is not None:
+            filters.append("pl.added >= %(since)s")
+            params["since"] = since
+        elif months > 0:
             filters.append("pl.added >= DATE_SUB(CURDATE(), INTERVAL %(months)s MONTH)")
             params["months"] = months
         if branch_id is not None:
